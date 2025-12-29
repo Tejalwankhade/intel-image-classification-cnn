@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # ----------------------------------------------------
-# Header
+# Header / Title
 # ----------------------------------------------------
 st.markdown(
     """
@@ -25,7 +25,7 @@ st.markdown(
     </h4>
 
     <p style='text-align:center; font-size:16px;'>
-        Upload an image and the AI model will classify the scene.
+        Upload a natural scene image and the AI model will classify it into one of six categories.
     </p>
 
     <hr>
@@ -34,7 +34,7 @@ st.markdown(
 )
 
 # ----------------------------------------------------
-# Load TFLite Model
+# Load TFLite model
 # ----------------------------------------------------
 @st.cache_resource
 def load_tflite_model():
@@ -43,41 +43,61 @@ def load_tflite_model():
     return interpreter
 
 interpreter = load_tflite_model()
-
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
 # ----------------------------------------------------
-# Class Labels
+# Class labels (correct order)
 # ----------------------------------------------------
 class_names = ['buildings', 'forest', 'glacier', 'mountain', 'sea', 'street']
 
 # ----------------------------------------------------
-# Upload Image
+# Upload image
 # ----------------------------------------------------
-uploaded_file = st.file_uploader("📤 Upload image", type=["jpg","jpeg","png"])
+uploaded_file = st.file_uploader("📤 Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
+
     image = Image.open(uploaded_file).convert("RGB")
     st.image(image, caption="🖼 Uploaded Image", use_column_width=True)
 
-    # Preprocess
+    # ------------------------------------------------
+    # 🔥 Correct preprocessing for quantized model
+    # ------------------------------------------------
     img = image.resize((150, 150))
-    img_array = np.array(img) / 255.0
-    img_array = np.expand_dims(img_array, axis=0).astype("float32")
+    img_array = np.array(img)
 
+    input_dtype = input_details[0]["dtype"]  # check expected input type
+
+    # Case 1: float model
+    if input_dtype == np.float32:
+        img_array = img_array.astype("float32") / 255.0
+
+    # Case 2: quantized model (int8/uint8)
+    else:
+        scale, zero_point = input_details[0]["quantization"]
+        img_array = img_array.astype("float32") / 255.0
+        img_array = img_array / scale + zero_point
+        img_array = img_array.astype(input_dtype)
+
+    img_array = np.expand_dims(img_array, axis=0)
+
+    # ------------------------------------------------
     # Run inference
+    # ------------------------------------------------
     interpreter.set_tensor(input_details[0]["index"], img_array)
     interpreter.invoke()
     preds = interpreter.get_tensor(output_details[0]["index"])
 
-    pred_index = np.argmax(preds)
+    pred_index = int(np.argmax(preds))
     pred_label = class_names[pred_index]
-    confidence = np.max(preds) * 100
+    confidence = float(np.max(preds) * 100)
 
     st.markdown("---")
 
+    # ------------------------------------------------
     # Fancy result card
+    # ------------------------------------------------
     st.markdown(
         f"""
         <div style="
@@ -96,7 +116,6 @@ if uploaded_file is not None:
     )
 
     st.success("🎉 Image classified successfully!")
-
 
 st.markdown("---")
 st.caption("Created by **Tejal Wankhade**")
